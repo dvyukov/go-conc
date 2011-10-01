@@ -1,0 +1,4 @@
+package goconc
+
+func Foo() {
+}
