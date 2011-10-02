@@ -9,6 +9,7 @@ type Pipeline struct {
 }
 
 type Stage struct {
+	In chan <- func()
 	q chan func()
 	w sync.WaitGroup
 }
@@ -16,6 +17,7 @@ type Stage struct {
 func (p *Pipeline) Stage(conc int) *Stage {
 	var s Stage
 	s.q = make(chan func(), conc*10)
+	s.In = s.q
 	s.w.Add(conc)
 	for i := 0; i < conc; i++ {
 		go func() {
@@ -34,8 +36,4 @@ func (p *Pipeline) Wait() {
 		close(s.q)
 		s.w.Wait()
 	}
-}
-
-func (s *Stage) Go(g func()) {
-	s.q <- g
 }

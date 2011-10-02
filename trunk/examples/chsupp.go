@@ -75,29 +75,29 @@ func main() {
 	suppressions := make(map[string]int)
 	for _, w := range waterfallList {
 		w := w
-		builderStage.Go(func() {
+		builderStage.In <- func() {
 			log.Printf("builderStage: %s", w)
 			for _, b := range getBuilderList(w) {
 				path := fmt.Sprintf("%s/builders/%s/builds", w, b)
-				discoverStage.Go(func() {
+				discoverStage.In <- func() {
 					log.Printf("discoverStage: %s", path)
 					for _, l := range getRunLogs(path, *nRuns) {
 						logUrl, err := url.Parse(l)
 						if err != nil { continue }
-						processStage.Go(func() {
+						processStage.In <- func() {
 							log.Printf("processStage: %s", logUrl)
 							supp := processLog(logUrl)
 							if supp == nil { return }
-							mergeStage.Go(func() {
-									for s, n := range supp {
-										suppressions[s] += n
-									}
-							})
-						})
+							mergeStage.In <- func() {
+								for s, n := range supp {
+									suppressions[s] += n
+								}
+							}
+						}
 					}
-				})
+				}
 			}
-		})
+		}
 	}
 	p.Wait()
 	output(suppressions)

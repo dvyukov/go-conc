@@ -13,12 +13,12 @@ func TestPipeline(t *testing.T) {
 	x := 0
 	for i := 0; i < N; i++ {
 		i := i
-		mulStage.Go(func() {
+		mulStage.In <- func() {
 			ii := i*i
-			addStage.Go(func() {
+			addStage.In <- func() {
 				x += ii
-			})
-		})
+			}
+		}
 	}
 	p.Wait()
 	
