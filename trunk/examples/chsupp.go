@@ -73,20 +73,15 @@ func main() {
 	mergeStage := p.Stage(1)
 	
 	suppressions := make(map[string]int)
-	for _, ww := range waterfallList {
-		w := ww
+	for _, w := range waterfallList {
+		w := w
 		builderStage.Go(func() {
 			log.Printf("builderStage: %s", w)
-			builders := getBuilderList(w)
-			for _, b := range builders {
+			for _, b := range getBuilderList(w) {
 				path := fmt.Sprintf("%s/builders/%s/builds", w, b)
-				//log.Printf("Stuffing %v into channel", request)
 				discoverStage.Go(func() {
 					log.Printf("discoverStage: %s", path)
-					logs := getRunLogs(path, *nRuns)
-					//log.Printf("B %v", discoverLogRequest.builderPath)
-					for _, ll := range logs {
-						l := ll
+					for _, l := range getRunLogs(path, *nRuns) {
 						logUrl, err := url.Parse(l)
 						if err != nil { continue }
 						processStage.Go(func() {
