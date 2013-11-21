@@ -1,0 +1,321 @@
+Go Runtime Cuts
+Nov 20, 2013 @Yandex
+
+Dmitry Vyukov, Google
+@dvyukov
+http://www.1024cores.net
+
+* Agenda
+
+- Network poller
+- Scheduler
+- GC!
+
+.image yopher.png 300 300
+
+* Network Poller
+
+* Old Network Poller
+
+- Go 1.0
+- "User-space" implementation
+- Level-triggered epoll
+- epoll_ctl per read/write
+- Dedicated polling goroutine
+- Global sync.Mutex
+- Own timer heap
+
+Slow, non-scalable, bad scheduling, memory allocations
+
+* New Network Poller
+
+- Go 1.1 (linux, darwin), Go 1.2 (windows, *bsd)
+- Integrated with scheduler
+- Edge-triggered epoll
+- epoll_ctl per connection
+- Worker threads poll when out of work
+- Runtime timers
+- No global mutexes
+- No memory allocations
+- Better scheduling
+
+Fast and scalable
+
+* Windows Network Poller
+
+- GQCS-based
+- FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
+- Removed lots of unnecessary overheads
+
+* Network Poller Performance (linux)
+
+Go1.1 vs Go1.0
+
+ benchmark                           old ns/op    new ns/op    delta
+ BenchmarkTCPPersistent                  81670         7782  -90.47%
+ BenchmarkTCPPersistent-2                26598         4808  -81.92%
+ BenchmarkTCPPersistent-4                15633         3674  -76.50%
+ BenchmarkTCPPersistent-8                18093         2407  -86.70%
+ BenchmarkTCPPersistent-16               17472         1875  -89.27%
+ BenchmarkTCPPersistent-32                7679         1637  -78.68%
+
+.image yopher.png
+
+* Network Poller Performance (windows)
+
+Go1.2 vs Go1.1
+
+ benchmark                             old ns/op    new ns/op    delta
+ BenchmarkTCP4Persistent                   50342        20511  -59.26%
+ BenchmarkTCP4Persistent-2                 74974        10454  -86.06%
+ BenchmarkTCP4Persistent-4                 55663         9214  -83.45%
+
+* Network Poller Future
+
+- Not much comes to mind
+- Spot optimizations
+- Hierarchical epoll descriptors?
+- Request prioritization (write over read over accept)?
+- Scalable timers
+
+* Scheduler
+
+* Old Scheduler
+
+- Go 1.0
+- As simple as you can imagine
+- Single data structure
+- Global mutex
+
+Does not scale, sorry.
+
+* New Scheduler
+
+- Go 1.1
+- Most data is distributed
+- Fine-grained locking
+- A dash of lock-free
+- Handles syscalls/cgo differently
+- Knows about network poller
+- Preemptive (Go 1.2)
+
+Nor particularly faster (*), but scales well.
+
+* Scheduler Performance
+
+ benchmark                           old ms/op    new ms/op    delta
+ ParallelMatrixMatmult                   23163        23857   +2.97%
+ ParallelMatrixMatmult-2                 22182        12183  -45.07%
+ ParallelMatrixMatmult-4                 25568         6557  -74.35%
+ ParallelMatrixMatmult-8                 31372         4338  -86.17%
+ ParallelMatrixMatmult-16                27275         3478  -87.24%
+ ParallelMatrixMatmult-32                26074         2385  -90.85%
+
+* Scheduler Internals
+
+ Goroutine (G)
+ \/\/\/\/\/\/
+ Go Processor (P)
+ \/\/\/\/\/\/
+ OS Thread (M)
+
+* Goroutines
+
+- This is your goroutine
+- 38 fields, 288 bytes
+- +4K stack, +2K defer cache = 6432 bytes
+
+ struct  G {
+        uintptr stackguard;  // segmented stacks
+        uintptr stackbase;
+        int64   goid;        // id for stack dumps
+        int16   status;      // running, runnable, blocked
+        Gobuf   sched;       // saved registers
+        G*      alllink;     // links all goroutines
+        G*      schedlink;   // links G's in schuedler
+        // panic, defer, etc, etc
+ };
+
+* Go Processors
+
+- Logical entity, holds data necessary to execute Go code
+- There is exactly GOMAXPROCS P's
+
+ struct P {
+        Lock;
+        int32   id;
+        uint32  status;         // one of Pidle/Prunning/...
+        uint32  schedtick;      // incremented on every scheduler call
+        uint32  syscalltick;    // incremented on every system call
+
+        MCache* mcache;
+
+        // Queue of runnable goroutines.
+        G**     runq;
+        int32   runqhead;
+        int32   runqtail;
+        int32   runqsize;
+
+        // Available G's (status == Gdead)
+        G*      gfree;
+        int32   gfreecnt;
+ };
+
+* Threads
+
+- Plain old OS thread
+
+ struct  M {
+        int32   id;
+        G*      g0;             // goroutine with scheduling stack
+        G*      gsignal;        // signal-handling G
+        G*      curg;           // current running goroutine
+        G*      lockedg;        // locked goroutine
+        P*      p;              // attached P for executing Go code
+        M*      alllink;        // links all M's
+        M*      schedlink;      // links M's in scheduler
+        void*   stackcache[];   // stack segment cache
+        // lots of other stuff
+ };
+
+* Scheduler
+
+- The remaining centralized state
+
+ struct Sched {
+        Lock;
+        uint64  goidgen;
+        M*      midle;  // idle m's waiting for work
+        P*      pidle;  // idle P's
+
+        // Global runnable queue.
+        G*      runqhead;
+        G*      runqtail;
+        int32   runqsize;
+
+        // Global cache of dead G's.
+        Lock    gflock;
+        G*      gfree;
+
+        uint32  gcwaiting;      // gc is waiting to run
+
+        ...
+ };
+
+* Scheduler Future
+
+- Spot optimizations
+- Scalable integrated timers
+- Priority scheduling (new g, network)?
+- Affinity (thread, goroutine, NUMA)?
+- More preemption?
+
+* GC
+
+.image yopher.png
+
+* Current GC State
+
+- Mark-and-sweep
+- Mostly parallel
+- Stop-the-world (not concurrent)
+- Quite slow
+- Partially precise
+- Always full (not partial/generational)
+- Non compacting
+- Heap/GC are separated
+
+* GC Knobs
+
+- GOGC, GC target percentage, 100% by default
+- GC is triggered when fresh/old memory == GOGC%
+
+* GC Cost Model
+
+ Tgc = Tmark + Tsweep
+
+ TMark = O(live heap)
+ Tsweep = O(dead heap)
+
+* GC Cost Model (extended)
+
+ Tgc = Tseq + Tmark + Tsweep
+
+ TMark = C1*Nlive + C2*MEMlive_ptr + C3*Nptr
+ Tsweep = C1*MEMtotal + C2*MEMdead
+
+* GC Future
+
+- Precise GC (Go1.3)
+- Concurrent sweep (Go1.3)
+- Faster GC (Go1.4?)
+- Concurrent/generational/partial/compacting (Go1.X?)
+
+* What you can do?
+
+Bad for GC:
+
+- large graphs of small objects with pointers
+
+Good for GC:
+
+- string, []byte
+- objects w/o pointers
+- larger objects
+
+* What you can do? (2)
+
+Bad:
+
+ type Point struct {
+   x, y, z int
+   next, prev, parent *Point
+ }
+ var Data []*Point
+
+Better:
+
+ type Point struct {
+   x, y, z int
+   next, prev, parent *Point
+ }
+ var Data []Point
+
+Even better (as []byte):
+
+ type T struct {
+   x, y, z int
+   nextIdx, prevIdx, parentIdx int
+ }
+ var Data []Point
+
+* What you can do? (3)
+
+Embed!
+
+ type RequestContext struct {
+   req Request
+   ts time.Time
+   buf [1024]byte
+   ...
+ }
+
+* What you can do? (4)
+
+Go LevelDB (key->value storage):
+
+- data is in large []byte
+- manually allocates/frees objects
+- uses indices instead of pointers
+
+Why?
+
+In-process memcached with zero call cost and no GC pressure.
+
+1GB []byte + 10MB heap == 10MB heap!
+
+* Profile!
+
+ go test -memprofile
+
+ go tool pprof http://localhost:6060/debug/pprof/heap
