@@ -1,0 +1,135 @@
+Go1.1 and beyond
+
+Dmitry Vyukov
+Google
+@dvyukov
+
+* Agenda
+
+- Go1.1 brief overview
+- My contributions
+- Go 1.2
+- Data race detector
+
+* Questionarie
+
+- Go1.0 vs tip?
+- 32 vs 64 bit?
+- gccgo?
+- OS?
+
+* Go1.1 brief overview
+
+- Faster and more scalable
+- Language improvements
+- Lackage improvements
+- Toolchain improvements
+
+* Language improvements
+
+- 64-bit int on 64-bit platforms
+- Method values
+.code method.go
+- Unreachable code
+.code return.go
+
+* Package improvements
+
+- bufio.Scanner
+- reflect: select, MakeFunc, ChanOf/MapOf/SliceOf
+- time: nanosecond precision, Timer.Reset()
+- testing: AllocsPerRun(), t.Skipf(), Verbose()
+
+* Runtime/compiler improvements
+
+- freebsd/arm, netbsd/386, netbsd/amd64, netbsd/arm, openbsd/386, openbsd/amd64
+- Bigger heap size on 64-bit
+- New map impl
+- More inlining
+- Better codegen
+- Precise GC
+
+* My contributions
+
+- New goroutine scheduler
+- Faster and parallel GC
+- Faster and more scalable network poller
+- Blocking profiler
+- Sync primitives
+- Atomic Load/Store
+- Scalable runtime (malloc, chan/select, maps, stacks, mutexes, semaphores, etc)
+- go test -cpu=1,2,4 -benchtime=10s
+- Data race detector
+- Etc (tests, benchmarks, crashes, deadlocks, refactorings, ...)
+
+* GC
+
+test/bench/garbage/parser.go
+
+- Go1.0
+27.22 sec elapsed
+133 ms pause
+
+- Go1.1 precise
+20.25 sec elapsed
+68 ms pause
+
+- Go1.1 imprecise
+17.72 sec elapsed
+48 ms pause
+
+* Block profiler
+
+$ go test -blockprofile=prof
+
+* Go1.2
+
+- sync.Cache
+- sync.Counter
+- faster GC
+- faster malloc
+- faster chans
+- preemptive scheduler
+
+* Data Race Detector
+
+- Data races are among the most common and hardest to debug types of bugs in concurrent systems
+- A data race occurs when two goroutines access the same variable concurrently and at least one of the accesses is a write
+
+* Data Race Example
+
+$ go run
+
+.play example.go /START/,/STOP.*/
+
+* Data Race Example
+
+$ go run *-race*
+
+.play example.go /START/,/STOP.*/
+
+* ioutil.Discard race
+
+bradfitz:
+"In more seriousness, do we care?  The whole point of ioutil.Discard and its devNull type is to just throw away data.  I don't care if multiple goroutines are throwing away data to the same place."
+
+
+* Race Stats
+
+- 42 races in std lib
+- 2 builders, 100% test coverage
+- 100% internal test coverage, hundreds of bugs
+
+* How To Test
+
+- Run the tests
+- Write good tests
+- Run full binary under realistic workload
+
+* Issues
+
+- Only 64-bit linux/darwin/windows
+- 2-20x slowdown
+- 5-10x more memory
+
+
