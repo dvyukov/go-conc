@@ -1,13 +1,15 @@
-// NCASE=2
-
 package main
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
 
 func main() {
+	Case := Init(2)
+	fmt.Printf("DEADLOCK\n")
+
 	var mu sync.Mutex
 	var once sync.Once
 	done := make(chan bool)
