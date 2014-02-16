@@ -1,5 +1,4 @@
-// The program deadlocks.
-// The opposite scheduling order is examined in waitgroup1.go.
+// NCASE=2
 
 package main
 
@@ -13,11 +12,16 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		time.Sleep(time.Second)
+		if Case == 1 {
+			time.Sleep(time.Second)
+		}
 		mu.Lock()
-		mu.Unlock()
 		wg.Done()
+		mu.Unlock()
 	}()
+	if Case == 0 {
+		time.Sleep(time.Second)
+	}
 	mu.Lock()
 	wg.Wait()
 	mu.Unlock()
