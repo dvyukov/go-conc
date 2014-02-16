@@ -34,3 +34,12 @@ func Init(ncase int) int {
 	}()
 	return c
 }
+
+var sleep3 = [6][3]time.Duration{
+	{0 * time.Second, 1 * time.Second, 2 * time.Second},
+	{0 * time.Second, 2 * time.Second, 1 * time.Second},
+	{1 * time.Second, 0 * time.Second, 2 * time.Second},
+	{1 * time.Second, 2 * time.Second, 0 * time.Second},
+	{2 * time.Second, 0 * time.Second, 1 * time.Second},
+	{2 * time.Second, 1 * time.Second, 0 * time.Second},
+}
