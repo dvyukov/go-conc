@@ -112,6 +112,14 @@ Parallel network address resolution, given a work list:
 
 .play addr2.go /lookup/+1,/^}/-1
 
+* Concurrency
+
+Select statements: switch for communication.
+
+.play select.go /select/,/^}/-1
+
+That's select that makes efficient implementation difficult.
+
 * Implementing Concurrency
 
 Challenge: Make channel communication scale
@@ -127,6 +135,76 @@ Research question: lock-free channels?
 * Scheduling
 
 .image gophercomplex6.jpg
+
+* Scheduling
+
+On the one hand we have arbitrary user programs:
+
+- fine-grained goroutines, coarse-grained goroutines or a mix of both
+- computational goroutines, IO-bound goroutines or a mix of both
+- arbitrary dynamic communication patterns
+- busy, idle, bursty programs
+
+No user hints!
+
+* Scheduling
+
+On the other hand we have complex hardware topology:
+
+- per-core caches
+- caches shared between cores
+- cores shared between hyper threads (HT)
+- multiple processors with non-uniform memory access (NUMA)
+
+* Scheduling
+
+Challange: make it all magically work efficiently
+
+- start with one global lock for all scheduler state
+- distributed work-stealing scheduler with per-"processor" state
+- integrated network poller into scheduler
+- lock-free work queues
+
+* Scheduling
+
+Current scheduler:
+
+ ┌─┐         ┌─┐         ┌─┐         ┌─┐                  ┌─┐
+ │ │         │ │         │ │         │ │                  │ │
+ ├─┤         ├─┤         ├─┤         ├─┤                  ├─┤ Global
+ │ │         │G│         │ │         │ │                  │ │ state
+ ├─┤         ├─┤         ├─┤         ├─┤                  ├─┤
+ │G│         │G│         │G│         │ │                  │G│
+ ├─┤         ├─┤         ├─┤         ├─┤                  ├─┤
+ │G│         │G│         │G│         │G│                  │G│
+ └┬┘         └┬┘         └┬┘         └┬┘                  └─┘
+  │           │           │           │
+  ▽           ▽           ▽           ▽
+ ┌─┬──────┐  ┌─┬──────┐  ┌─┬──────┐  ┌─┬──────┐          ┌────┐
+ │P│mcache│  │P│mcache│  │P│mcache│  │P│mcache│          │heap│
+ └┬┴──────┘  └┬┴──────┘  └┬┴──────┘  └┬┴──────┘          └────┘
+  │           │           │           │
+  ▽           ▽           ▽           ▽
+ ┌─┐         ┌─┐         ┌─┐         ┌─┐               ┌─┐ ┌─┐ ┌─┐
+ │M│         │M│         │M│         │M│               │M│ │M│ │M│
+ └─┘         └─┘         └─┘         └─┘               └─┘ └─┘ └─┘
+
+G - goroutine; P - logical processor; M - OS thread (machine)
+
+* Scheduling
+
+Want:
+
+- temporal locality to exploit caches
+- spatial locality to exploit NUMA
+- schedule mostly LIFO but ensure weak fairness
+- allocate local memory and stacks
+- scan local memory in GC
+- collocate communicating goroutines
+- distribute non-communicating goroutines
+- distribute timers and network poller
+- poll network on the same core where last read was issued
+
 
 
 
@@ -147,11 +225,25 @@ Fundamental to interfaces: memory management details do not bifurcate otherwise-
 
 Of course, adds cost, latency, complexity in run time system.
 
-* Avoiding Garbage Collection
+* Garbage Collection
 
-Observation: garbage collection is a service, and like any service it can be overloaded, oversubscribed.
+Plenty of research about garbage collection, mostly in Java context.
 
-Go lets you limit allocation by controlling memory layout.
+- Parallel stop-the-world
+- CMS: concurrent mark-and-sweep, stop-the-world compaction
+- G1: region-based incremental copying collector
+
+Java collectors usually:
+
+- are generational/incremental because allocation rate is high
+- compact memory to support generations
+- have pauses because concurrent compaction is tricky and slow
+
+* Garbage Collection
+
+But Go is very different!
+
+- User can avoid lots of allocations by embeding objects:
 
 	type Point struct {
 		X, Y int
@@ -161,18 +253,22 @@ Go lets you limit allocation by controlling memory layout.
 		Min, Max Point
 	}
 
+- Interior pointers are allowed:
+
+	p := &rect.Max
+
+- Hundreds of thousands of stacks (goroutines)
+- No object headers so far
+
 * Implementing Garbage Collection
 
-Language decision: interior pointers are allowed, as are foreign pointers
+Cannot reuse Java GC algorithms directly.
 
-- Cannot reuse Java GC algorithms directly.
-- But gives _programmer_ more control over allocation.
+Current GC: stop the world, parallel mark, start the world, concurrent sweep.
+Concurrent mark is almost ready.
 
-Allocator: objects are allocated in pages with other objects of the same size.
-
-Current GC: stop the world, parallel mark, start the world, background sweep.
-
-Research question: how to make collector lower latency, possibly incremental?
+Research question: what GC algorithm is the best fit for Go?
+Do we need generations? Do we need compaction? What are efficient data structures that support interior pointers?
 
 
 
@@ -181,12 +277,150 @@ Research question: how to make collector lower latency, possibly incremental?
 
 .image race.png 160 600
 
+* Race detection
+
+Based on ThreadSanitizer runtime, originally mainly targeted C/C++.
+Traditional happens-before race detector based on vector clocks (devil in details!).
+Works fine for Go, except:
+
+ $ go run -race lots_of_goroutines.go
+ race: limit on 8192 simultaneously alive goroutines is exceeded, dying
+
+Research question: race dectector that efficiently supports hundreds of thousands of goroutines?
+
+* Deadlock detection
+
+Deadlock on mutexes due to lock order inversion:
+
+ // thread 1                       // thread 2
+ pthread_mutex_lock(&m1);          pthread_mutex_lock(&m2);
+ pthread_mutex_lock(&m2);          pthread_mutex_lock(&m1);
+ ...                               ...
+ pthread_mutex_unlock(&m2);        pthread_mutex_unlock(&m1);
+ pthread_mutex_unlock(&m1);        pthread_mutex_unlock(&m2);
+
+Lock order inversions are easy to detect:
+
+- build "M1 is locked under M2" relation.
+- if it becomes cyclic, there is a potential deadlock.
+- whenever a new edge is added to the graph, do DFS to find cycles.
+
+* Deadlock detection
+
+Go has channels and mutexes. A mutex can be unlocked in a different goroutine,
+so it is essentially a binary semaphore. Channels are semaphores too.
+
+Deadlock example:
+
+	// Parallel file tree walk.
+	func worker(pendingItems chan os.FileInfo)
+		for f := range pendingItems {
+			if f.IsDir() {
+				filepath.Walk(f.Name(), func(path string, info os.FileInfo, err error) error {
+					pendingItems <- info
+				})
+			} else {
+				visit(f)
+			}
+		}
+	}
+
+pendingItems channel has limited capacity. All workers can block on send to pendingItems.
+
+* Deadlock detection
+
+Another deadlock example:
+
+ var (
+ 	c = make(chan T, 100)
+ 	mtx sync.RWMutex
+  )
+ 
+ // goroutine 1      // goroutine 2         // goroutine 3
+ // does send        // does receive        // "resizes" the channel
+ mtx.RLock()         mtx.RLock()            mtx.Lock()
+ c <- v              v := <-c               tmp := make(chan T, 200)
+ mtx.RUnlock()       mtx.RUnlock()          copyAll(c, tmp)
+                                            c = tmp
+                                            mtx.Unlock()
+
+RWMutex is fair for both readers and writers: when a writer arrives, new readers are not let to enter the critical section.
+Goroutine 1 blocks on chan send; then goroutine 3 blocks on mtx.Lock; then goroutine 2 blocks on mtx.RLock.
+
+* Deadlock detection
+
+Research question: how to detect deadlocks on semaphores?
+
+No known theory to date.
+
 
 
 
 * Testing of the implementation
 
 .image gopherswrench.jpg 240 405
+
+* Testing of the implementation
+
+So now we have a new language with several complex implementations:
+
+- lexer
+- parser
+- transformation and optimization passes
+- code generation
+- linker
+- channel and map operations
+- garbage collector
+- ...
+
+*How*do*you*test*it?*
+
+* Testing of the implementation
+
+Csmith is a tool that generates random C programs that statically and dynamically conform to the C99 standard.
+
+.image csmith.png
+
+* Testing of the implementation
+
+Gosmith is a tool that generates random Go programs that statically and dynamically conform to the Go standard.
+
+Turned out to be much simpler than C: no undefined behavior all around!
+
+- no unitialized variables
+- no concurrent mutations between sequence points (x[i++] = --i)
+- no UB during signed overflow
+- total 191 kinds of undefined behavior and 52 kinds of unspecified behavior in C
+
+* Testing of the implementation
+
+But generates uninteresting programs from execution point of view: most of them deadlock or crash on nil deref.
+
+Trophies:
+
+- 31 bugs in gc compiler
+- 18 bugs in gccgo compiler
+- 5 bugs in llgo compiler
+- 1 bug in gofmt
+- 3 bugs in the spec
+
+* Testing of the implementation
+
+Research question: how to generate random *interesting*concurrent* Go programs?
+
+Must:
+
+- create and wait for goroutines 
+- communicate over channels
+- protect data with mutexes (reader-writer)
+- pass data ownership between goroutines (explicitly and implicitly)
+
+Must not:
+
+- deadlock
+- cause data races
+- have non-deterministic results
+
 
 
 
