@@ -9,7 +9,7 @@ import (
 )
 
 func lookup() {
-	done := make(chan bool, len(worklist))
+	done := make(chan bool)
 
 	for _, w := range worklist {
 		go func(w *Work) {
@@ -18,7 +18,7 @@ func lookup() {
 		}(w)
 	}
 
-	for i := 0; i < len(worklist); i++ {
+	for range worklist {
 		<-done
 	}
 }
