@@ -108,7 +108,7 @@ Sequential network address resolution, given a work list:
 
 * Concurrency
 
-Parallel network address resolution, given a work list:
+Concurrent network address resolution, given a work list:
 
 .play addr2.go /lookup/+1,/^}/-1
 
@@ -179,12 +179,12 @@ Current scheduler:
  │G│         │G│         │G│         │G│                  │G│
  └┬┘         └┬┘         └┬┘         └┬┘                  └─┘
   │           │           │           │
-  ▽           ▽           ▽           ▽
- ┌─┬──────┐  ┌─┬──────┐  ┌─┬──────┐  ┌─┬──────┐          ┌────┐
- │P│mcache│  │P│mcache│  │P│mcache│  │P│mcache│          │heap│
- └┬┴──────┘  └┬┴──────┘  └┬┴──────┘  └┬┴──────┘          └────┘
+  ▽          ▽          ▽           ▽
+ ┌─┬──────┐  ┌─┬──────┐  ┌─┬──────┐  ┌─┬──────┐     ┌────┐┌──────┐┌───────┐
+ │P│mcache│  │P│mcache│  │P│mcache│  │P│mcache│     │heap││timers││netpoll│
+ └┬┴──────┘  └┬┴──────┘  └┬┴──────┘  └┬┴──────┘     └────┘└──────┘└───────┘
   │           │           │           │
-  ▽           ▽           ▽           ▽
+  ▽          ▽          ▽           ▽
  ┌─┐         ┌─┐         ┌─┐         ┌─┐               ┌─┐ ┌─┐ ┌─┐
  │M│         │M│         │M│         │M│               │M│ │M│ │M│
  └─┘         └─┘         └─┘         └─┘               └─┘ └─┘ └─┘
@@ -248,11 +248,12 @@ But Go is very different!
 	type Point struct {
 		X, Y int
 	}
-	
 	type Rectangle struct {
 		Min, Max Point
 	}
 
+- Less pointers.
+- Lots of stack allocations.
 - Interior pointers are allowed:
 
 	p := &rect.Max
@@ -262,10 +263,10 @@ But Go is very different!
 
 * Implementing Garbage Collection
 
-Cannot reuse Java GC algorithms directly.
-
 Current GC: stop the world, parallel mark, start the world, concurrent sweep.
 Concurrent mark is almost ready.
+
+Cannot reuse Java GC algorithms directly.
 
 Research question: what GC algorithm is the best fit for Go?
 Do we need generations? Do we need compaction? What are efficient data structures that support interior pointers?
@@ -307,8 +308,8 @@ Lock order inversions are easy to detect:
 
 * Deadlock detection
 
-Go has channels and mutexes. A mutex can be unlocked in a different goroutine,
-so it is essentially a binary semaphore. Channels are semaphores too.
+Go has channels and mutexes. Channels are semaphores. A mutex can be unlocked in
+a different goroutine, so it is essentially a binary semaphore too.
 
 Deadlock example:
 
@@ -403,6 +404,8 @@ Trophies:
 - 5 bugs in llgo compiler
 - 1 bug in gofmt
 - 3 bugs in the spec
+
+.image emoji.png
 
 * Testing of the implementation
 
