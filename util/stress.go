@@ -6,8 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"time"
 	"syscall"
+	"time"
 )
 
 var (
@@ -44,7 +44,7 @@ func main() {
 						select {
 						case <-done:
 							return
-						case <-time.After(10*time.Second):
+						case <-time.After(10 * time.Second):
 						}
 						cmd.Process.Kill()
 					}()
